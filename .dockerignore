@@ -1,0 +1,16 @@
+.git
+.github
+.idea
+**/node_modules
+**/build
+**/.gradle
+**/venv
+**/__pycache__
+**/*.pyc
+**/dist
+**/.env
+**/.env.local
+**/data/events/*
+**/query_data/*
+!**/data/.gitkeep
+!**/query_data/.gitkeep
