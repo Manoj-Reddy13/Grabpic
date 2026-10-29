@@ -62,7 +62,8 @@ npm run dev
 Backend:
 ```bash
 cd backend
-./gradlew bootRun
+npm install
+npm run dev
 ```
 
 AI service:

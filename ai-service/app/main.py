@@ -22,7 +22,12 @@ from app.services.processor import ImageProcessor
 from app.services.search_service import SearchService
 from app.core.security import verify_token
 from app.core.limiter import is_rate_limited
-from app.core.blob_service import upload_image_bytes, delete_event_blobs, generate_download_sas
+from app.core.blob_service import (
+    upload_image_bytes,
+    delete_event_blobs,
+    download_event_images as download_event_blobs,
+    generate_download_sas,
+)
 from app.core.blob_storage import save_image_bytes
 
 
@@ -164,11 +169,18 @@ async def process_images(event_id: str, background_tasks: BackgroundTasks, files
             json.dump(meta_data, f)
 
     images_data = []
+    image_dir = os.path.join(event_dir, "images")
+    os.makedirs(image_dir, exist_ok=True)
+
     for file in files:
         filename = f"{uuid.uuid4()}.jpg"
         content = await file.read()
         
         images_data.append((filename, content))
+
+        image_path = os.path.join(image_dir, filename)
+        with open(image_path, "wb") as image_file:
+            image_file.write(content)
         
         # Dual-write: Upload to Azure Blob in background
         print(settings.USE_BLOB_STORAGE)
@@ -272,9 +284,54 @@ async def search_images(event_id: str, files: List[UploadFile] = File(...)):
 # -------------------------
 # API: Download Event Images
 # -------------------------
-# -------------------------
-# API: Download Event Images
-# -------------------------
+@app.get("/events/{event_id}/download")
+async def download_event_images(event_id: str):
+    if (
+        not event_id
+        or event_id in {".", ".."}
+        or os.path.basename(event_id) != event_id
+        or ":" in event_id
+        or "\x00" in event_id
+    ):
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    events_path = os.path.realpath(os.path.join(BASE_DATA_DIR, "events"))
+    event_path = os.path.realpath(os.path.join(events_path, event_id))
+    if os.path.commonpath([events_path, event_path]) != events_path:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    image_dir = os.path.join(event_path, "images")
+    image_names = []
+    if os.path.isdir(image_dir):
+        image_names = sorted(
+            name for name in os.listdir(image_dir)
+            if os.path.isfile(os.path.join(image_dir, name))
+        )
+
+    blob_images = []
+    if not image_names and settings.USE_BLOB_STORAGE:
+        blob_images = download_event_blobs(event_id)
+
+    if not image_names and not blob_images:
+        raise HTTPException(status_code=404, detail="No images found for this event")
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        if image_names:
+            for image_name in image_names:
+                archive.write(os.path.join(image_dir, image_name), arcname=image_name)
+        else:
+            for image_name, image_bytes in blob_images:
+                archive.writestr(image_name, image_bytes)
+
+    zip_buffer.seek(0)
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="photos.zip"'},
+    )
+
+
 @app.get("/download/{blob_name:path}")
 async def download_image(blob_name: str):
     """

@@ -75,6 +75,35 @@ def generate_download_sas(blob_name: str) -> str:
     return f"https://{account_name}.blob.core.windows.net/{settings.AZURE_CONTAINER_NAME}/{blob_name}?{sas_token}"
 
 
+def download_event_images(event_id: str) -> list[tuple[str, bytes]]:
+    """Download all image blobs for an event."""
+    if not settings.USE_BLOB_STORAGE:
+        return []
+
+    if not blob_service_client:
+        raise RuntimeError("BlobServiceClient not initialized.")
+
+    prefix = f"events/{event_id}/images/"
+    container_client = blob_service_client.get_container_client(
+        settings.AZURE_CONTAINER_NAME
+    )
+    blobs = sorted(
+        container_client.list_blobs(name_starts_with=prefix),
+        key=lambda blob: blob.name,
+    )
+
+    images = []
+    for blob in blobs:
+        filename = blob.name.removeprefix(prefix)
+        if not filename or "/" in filename:
+            continue
+
+        content = container_client.get_blob_client(blob.name).download_blob().readall()
+        images.append((filename, content))
+
+    return images
+
+
 def delete_event_blobs(event_id: str):
     """
     Deletes all blobs for a given event from Azure Blob Storage.

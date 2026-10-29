@@ -79,7 +79,7 @@ Match rules:
 
 ### GET `/events/{eventId}/download`
 
-Download all matched photos as a ZIP.
+Download all uploaded event photos as a ZIP.
 
 ```bash
 curl -O http://localhost:8080/events/{eventId}/download
@@ -95,6 +95,7 @@ Returns: binary ZIP (`photos.zip`).
 | GET | `/status/{event_id}` | Check processing status |
 | POST | `/search/{event_id}` | Search indexed images |
 | GET | `/images/{event_id}/images/{filename}` | Fetch image securely |
+| GET | `/events/{event_id}/download` | Download all event images as ZIP |
 | GET | `/download/{blob_name}` | Generate SAS download URL |
 
 ### POST `/process/{event_id}`

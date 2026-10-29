@@ -13,7 +13,7 @@ GrabPic follows a three-tier microservices architecture:
 ```
 ┌─────────────────┐      ┌──────────────────┐      ┌─────────────────┐
 │   FRONTEND      │─────>│     BACKEND      │─────>│    AI SERVICE   │
-│   React + Vite  │      │   Spring Boot    │      │  Python/FastAPI │
+│   React + Vite  │      │     Node.js      │      │  Python/FastAPI │
 └─────────────────┘      └──────────────────┘      └─────────────────┘
          │                          │                          │
          └──────────────────────────┴──────────────────────────┘
@@ -29,7 +29,7 @@ GrabPic follows a three-tier microservices architecture:
 | Service | Technology | Purpose |
 |---------|------------|---------|
 | **Frontend** | React 19, Vite | User interface for event creation, photo upload, and selfie search |
-| **Backend** | Spring Boot 3 (Java 21) | REST API, business logic, Azure Blob integration |
+| **Backend** | Node.js (Express) | REST API, business logic, Azure Blob integration |
 | **AI Service** | Python 3.11, FastAPI | Face detection (InsightFace), embeddings (FAISS), similarity search |
 
 ## Features
@@ -50,7 +50,7 @@ GrabPic follows a three-tier microservices architecture:
 - **Multi-selfie fusion**: Upload multiple selfies to improve match accuracy
 - **Secure image access**: Token-based signed URLs with expiration
 - **Rate limiting**: 60 requests per minute per IP for image access
-- **Auto-expiry**: Events automatically delete after 10 hours
+- **Auto-expiry**: Events automatically delete after 24 hours
 - **Azure Blob Storage**: Images stored securely with SAS token access
 - **Background cleanup**: Automatic deletion of expired events
 
@@ -75,7 +75,7 @@ AZURE_STORAGE_CONNECTION_STRING=your_connection_string_here
 AZURE_CONTAINER_NAME=events
 USE_BLOB_STORAGE=true
 IMAGE_TOKEN_SECRET=your-secret-key-change-in-production
-EVENT_EXPIRY_HOURS=10
+EVENT_EXPIRY_HOURS=24
 AI_PUBLIC_BASE_URL=http://localhost:8000
 ```
 
@@ -103,12 +103,13 @@ See [API.md](docs/API.md) for complete API documentation.
 │   │   ├── api/              # API client
 │   │   └── ...
 │   └── Dockerfile
-├── backend/                   # Spring Boot backend
-│   ├── src/main/java/
-│   │   └── com/grabpic/backend/
-│   │       ├── controller/   # REST controllers
-│   │       ├── service/      # Business logic
-│   │       └── dto/          # Data transfer objects
+├── backend/                   # Node.js backend
+│   ├── src/
+│   │   ├── config/           # Configuration
+│   │   ├── controllers/      # REST controllers
+│   │   ├── routes/           # Express routes
+│   │   └── services/         # Business logic
+│   ├── package.json
 │   └── Dockerfile
 ├── ai-service/               # Python AI service
 │   ├── app/
@@ -130,10 +131,10 @@ See [API.md](docs/API.md) for complete API documentation.
 - Radix UI (dialogs)
 
 ### Backend
-- Spring Boot 3.3.5
-- Java 21
-- Azure Storage Blob SDK 12.28.1
-- Lombok (code generation)
+- Node.js 20+
+- Express
+- Azure Storage Blob SDK
+- Multer & Axios
 
 ### AI Service
 - FastAPI (Python web framework)
@@ -173,7 +174,8 @@ npm run dev
 #### Backend
 ```bash
 cd backend
-./gradlew bootRun
+npm install
+npm run dev
 ```
 
 #### AI Service

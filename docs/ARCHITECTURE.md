@@ -114,9 +114,9 @@ Multi-selfie fusion searches each selfie independently, then deduplicates and ra
 
 - Signed URLs use HMAC-based tokens.
 - Tokens include event ID, image filename, and expiry.
-- Token expiry: 3 hours.
+- Token expiry: 24 hours.
 - Image access rate limit: 60 req/min/IP.
-- Events auto-delete after 10 hours.
+- Events auto-delete after 24 hours.
 
 Cleanup runs every 10 minutes and removes blob objects, local files, and FAISS indexes for expired events.
 

@@ -53,7 +53,7 @@
 #     # SECURITY & EXPIRY
 #     # -------------------------
 #     IMAGE_TOKEN_SECRET = os.getenv("IMAGE_TOKEN_SECRET", "defaultSecretKeyForTokensIfEnvMissing")
-#     EVENT_EXPIRY_HOURS = int(os.getenv("EVENT_EXPIRY_HOURS", "3"))
+#     EVENT_EXPIRY_HOURS = int(os.getenv("EVENT_EXPIRY_HOURS", "24"))
 
 #     # -------------------------
 #     # AZURE BLOB STORAGE
@@ -140,7 +140,7 @@ class Settings:
     )
 
     EVENT_EXPIRY_HOURS = int(
-        os.getenv("EVENT_EXPIRY_HOURS", "3")
+        os.getenv("EVENT_EXPIRY_HOURS", "24")
     )
 
     # -------------------------

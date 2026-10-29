@@ -24,25 +24,26 @@ CMD ["nginx", "-g", "daemon off;"]
 
 
 # ==========================================
-# Stage 2: Build Spring Boot Backend
+# Stage 2: Build Node.js Backend
 # ==========================================
-FROM eclipse-temurin:21-jdk AS backend-builder
+FROM node:20-alpine AS backend-builder
 WORKDIR /build/backend
 
-COPY backend/build.gradle backend/settings.gradle backend/gradlew ./
-COPY backend/gradle ./gradle
-RUN sed -i 's/\r$//' gradlew && chmod +x gradlew
-RUN ./gradlew dependencies --no-daemon
-
-COPY backend/src ./src
-RUN ./gradlew bootJar --no-daemon
+COPY backend/package*.json ./
+RUN npm ci --omit=dev
 
 # Standalone Backend Target
-FROM eclipse-temurin:21-jre-alpine AS backend
+FROM node:20-alpine AS backend
 WORKDIR /app
-COPY --from=backend-builder /build/backend/build/libs/*.jar app.jar
+ENV NODE_ENV=production
+ENV PORT=8080
+
+COPY backend/package*.json ./
+COPY --from=backend-builder /build/backend/node_modules ./node_modules
+COPY backend/src ./src
+
 EXPOSE 8080
-ENTRYPOINT ["java", "-Xmx256m", "-Xms128m", "-XX:+UseContainerSupport", "-jar", "app.jar"]
+CMD ["node", "src/server.js"]
 
 
 # ==========================================
@@ -95,11 +96,13 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 # ==========================================
 FROM python:3.11-slim AS all-in-one
 
-# Install system dependencies, Nginx, and Supervisor
+# Install system dependencies, Nginx, Supervisor, and Node.js
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     supervisor \
     curl \
+    nodejs \
+    npm \
     ffmpeg \
     libsm6 \
     libxext6 \
@@ -108,11 +111,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     python3-dev \
     && rm -rf /var/lib/apt/lists/*
-
-# Copy Java 21 JRE from Temurin
-COPY --from=eclipse-temurin:21-jre /opt/java/openjdk /opt/java/openjdk
-ENV JAVA_HOME=/opt/java/openjdk
-ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 # Install InsightFace buffalo_l model weights
 RUN mkdir -p /root/.insightface/models/buffalo_l && \
@@ -136,9 +134,11 @@ ENV QUERY_DIR=/app/query_data
 ENV PYTHONPATH=/app/ai-service
 RUN mkdir -p /app/data/events /app/query_data /var/log/supervisor
 
-# Copy Backend JAR
+# Copy Backend Node.js code
 WORKDIR /app/backend
-COPY --from=backend-builder /build/backend/build/libs/*.jar /app/backend/app.jar
+COPY backend/package*.json ./
+COPY --from=backend-builder /build/backend/node_modules ./node_modules
+COPY backend/src ./src
 
 # Copy Frontend static assets & Nginx config
 RUN rm -rf /etc/nginx/sites-enabled/default /etc/nginx/conf.d/default.conf
