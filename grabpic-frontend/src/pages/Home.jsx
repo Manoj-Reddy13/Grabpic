@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import PageWrapper from "../components/PageWrapper";
 import RetroButton from "../components/RetroButton";
+import Navbar from "../components/Navbar";
 
 const stagger = {
   animate: { transition: { staggerChildren: 0.08 } },
@@ -27,80 +28,83 @@ export default function Home() {
   };
 
   return (
-    <PageWrapper centered>
-      <motion.div
-        variants={stagger}
-        initial="initial"
-        animate="animate"
-        className="flex flex-col items-center"
-        style={{ gap: "24px", textAlign: "center" }}
-      >
-        {/* Title */}
-        <motion.h1
-          variants={fadeUp}
-          transition={{ duration: 0.25 }}
-          style={{
-            fontSize: "clamp(48px, 10vw, 80px)",
-            color: "var(--accent-cyan)",
-            textShadow: "0 0 30px rgba(0, 255, 224, 0.5), 0 0 60px rgba(0, 255, 224, 0.2)",
-            letterSpacing: "0.25em",
-            animation: "text-flicker 4s infinite",
-          }}
-        >
-          GRABPIC
-        </motion.h1>
-
-        {/* Subtitle */}
-        <motion.p
-          variants={fadeUp}
-          transition={{ duration: 0.25 }}
-          style={{
-            color: "var(--text-muted)",
-            fontSize: "14px",
-            letterSpacing: "0.3em",
-            textTransform: "uppercase",
-          }}
-        >
-          find yourself in memories
-        </motion.p>
-
-        {/* Buttons */}
+    <>
+      <Navbar />
+      <PageWrapper centered>
         <motion.div
-          variants={fadeUp}
-          transition={{ duration: 0.25 }}
-          className="flex items-center"
-          style={{ gap: "16px", marginTop: "24px", flexWrap: "wrap", justifyContent: "center" }}
+          variants={stagger}
+          initial="initial"
+          animate="animate"
+          className="flex flex-col items-center"
+          style={{ gap: "24px", textAlign: "center" }}
         >
-          <RetroButton variant="primary" onClick={() => navigate("/create")}>
-            Create Event
-          </RetroButton>
-        </motion.div>
+          {/* Title */}
+          <motion.h1
+            variants={fadeUp}
+            transition={{ duration: 0.25 }}
+            style={{
+              fontSize: "clamp(48px, 10vw, 80px)",
+              color: "var(--accent-cyan)",
+              textShadow: "0 0 30px rgba(0, 255, 224, 0.5), 0 0 60px rgba(0, 255, 224, 0.2)",
+              letterSpacing: "0.25em",
+              animation: "text-flicker 4s infinite",
+            }}
+          >
+            GRABPIC
+          </motion.h1>
 
-        {/* Open Event Input */}
-        <motion.div
-          variants={fadeUp}
-          transition={{ duration: 0.25 }}
-          style={{ marginTop: "12px", width: "100%", maxWidth: "360px" }}
-        >
-          <div className="event-id-row">
+          {/* Subtitle */}
+          <motion.p
+            variants={fadeUp}
+            transition={{ duration: 0.25 }}
+            style={{
+              color: "var(--text-muted)",
+              fontSize: "14px",
+              letterSpacing: "0.3em",
+              textTransform: "uppercase",
+            }}
+          >
+            AI Face Matching • Intelligent NL Search • Social Albums
+          </motion.p>
+
+          {/* Buttons */}
+          <motion.div
+            variants={fadeUp}
+            transition={{ duration: 0.25 }}
+            className="flex items-center"
+            style={{ gap: "16px", marginTop: "24px", flexWrap: "wrap", justifyContent: "center" }}
+          >
+            <RetroButton variant="primary" onClick={() => navigate("/create")}>
+              Create Event
+            </RetroButton>
+          </motion.div>
+
+          {/* Event Code Input */}
+          <motion.div
+            variants={fadeUp}
+            transition={{ duration: 0.25 }}
+            className="flex items-center"
+            style={{ gap: "8px", marginTop: "8px", width: "100%", maxWidth: "360px" }}
+          >
             <input
-              className="input"
               type="text"
-              placeholder="Enter Event ID..."
+              placeholder="Paste event ID or code..."
               value={eventId}
               onChange={(e) => setEventId(e.target.value)}
               onKeyDown={handleKeyDown}
+              className="collab-input text-center w-full"
             />
             <RetroButton
               variant="secondary"
               onClick={handleOpenEvent}
               disabled={!eventId.trim()}
+              style={{ whiteSpace: "nowrap" }}
             >
-              GO →
+              Go →
             </RetroButton>
-          </div>
+          </motion.div>
         </motion.div>
-      </motion.div>
-    </PageWrapper>
+      </PageWrapper>
+    </>
   );
 }
