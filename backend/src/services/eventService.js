@@ -26,6 +26,22 @@ export class EventService {
   async downloadAll(eventId) {
     return this.aiService.downloadAllImages(eventId);
   }
+
+  async getPhotosMetadata(eventId) {
+    return this.aiService.getPhotosMetadata(eventId);
+  }
+
+  async getPhotoAnalysis(eventId, filename) {
+    return this.aiService.getPhotoAnalysis(eventId, filename);
+  }
+
+  async filterPhotos(eventId, filters) {
+    return this.aiService.filterPhotos(eventId, filters);
+  }
+
+  async naturalLanguageSearch(eventId, query) {
+    return this.aiService.naturalLanguageSearch(eventId, query);
+  }
 }
 
 export const eventService = new EventService();

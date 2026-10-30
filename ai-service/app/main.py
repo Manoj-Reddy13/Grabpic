@@ -29,6 +29,7 @@ from app.core.blob_service import (
     generate_download_sas,
 )
 from app.core.blob_storage import save_image_bytes
+from app.core.nl_search import NLQueryParser
 
 
 # -------------------------
@@ -134,7 +135,8 @@ def background_process_images(event_id: str, images_data: list):
             meta_path=os.path.join(index_dir, "meta.json")
         )
 
-        processor = ImageProcessor(detector, embedder, indexer)
+        photos_meta_path = os.path.join(event_dir, "photos_meta.json")
+        processor = ImageProcessor(detector, embedder, indexer, photos_meta_path=photos_meta_path)
         processor.process_images(images_data)
         
         update_event_status(event_id, "completed")
@@ -279,6 +281,265 @@ async def search_images(event_id: str, files: List[UploadFile] = File(...)):
     search_service = SearchService(detector, embedder, matcher)
 
     return search_service.search(images)
+
+
+# -------------------------
+# API: Photos Metadata & Stats
+# -------------------------
+@app.get("/events/{event_id}/photos-metadata")
+async def get_photos_metadata(event_id: str):
+    event_dir = os.path.join(BASE_DATA_DIR, "events", event_id)
+    meta_path = os.path.join(event_dir, "photos_meta.json")
+
+    if not os.path.exists(meta_path):
+        return {"photos": {}, "stats": {}}
+
+    try:
+        with open(meta_path, "r") as f:
+            photos_data = json.load(f)
+
+        total_photos = len(photos_data)
+        group_photos = sum(1 for p in photos_data.values() if p.get("is_group_photo"))
+        single_photos = sum(1 for p in photos_data.values() if p.get("face_count", 0) == 1)
+        no_face_photos = sum(1 for p in photos_data.values() if p.get("face_count", 0) == 0)
+
+        scene_counts = {}
+        expr_counts = {}
+
+        for p in photos_data.values():
+            prim_scene = p.get("primary_scene")
+            if prim_scene:
+                scene_counts[prim_scene] = scene_counts.get(prim_scene, 0) + 1
+
+            dom_expr = p.get("dominant_expression")
+            if dom_expr:
+                expr_counts[dom_expr] = expr_counts.get(dom_expr, 0) + 1
+
+        return {
+            "eventId": event_id,
+            "photos": photos_data,
+            "stats": {
+                "total_photos": total_photos,
+                "group_photos": group_photos,
+                "single_photos": single_photos,
+                "no_face_photos": no_face_photos,
+                "scene_distribution": scene_counts,
+                "expression_distribution": expr_counts,
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed reading photo metadata: {e}")
+
+
+# -------------------------
+# API: Single Photo Analysis
+# -------------------------
+@app.get("/events/{event_id}/photos/{filename}/analysis")
+async def get_single_photo_analysis(event_id: str, filename: str):
+    event_dir = os.path.join(BASE_DATA_DIR, "events", event_id)
+    meta_path = os.path.join(event_dir, "photos_meta.json")
+
+    if not os.path.exists(meta_path):
+        raise HTTPException(status_code=404, detail="Event metadata not found")
+
+    try:
+        with open(meta_path, "r") as f:
+            photos_data = json.load(f)
+
+        photo = photos_data.get(filename)
+        if not photo:
+            raise HTTPException(status_code=404, detail="Photo analysis not found")
+
+        return photo
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------
+# API: Filter Photos (Scene, Expression, Face Count)
+# -------------------------
+@app.post("/events/{event_id}/filter")
+async def filter_event_photos(event_id: str, request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    event_dir = os.path.join(BASE_DATA_DIR, "events", event_id)
+    meta_path = os.path.join(event_dir, "photos_meta.json")
+
+    if not os.path.exists(meta_path):
+        return {"matches": [], "total": 0}
+
+    with open(meta_path, "r") as f:
+        photos_data = json.load(f)
+
+    target_scene = body.get("scene")
+    target_expression = body.get("expression")
+    is_group = body.get("is_group")
+    min_faces = body.get("min_faces")
+    max_faces = body.get("max_faces")
+
+    filtered = []
+    for filename, p in photos_data.items():
+        # Filter scene
+        if target_scene:
+            photo_scenes = [s["label"].lower() for s in p.get("scenes", [])]
+            if target_scene.lower() not in photo_scenes and p.get("primary_scene", "").lower() != target_scene.lower():
+                continue
+
+        # Filter expression
+        if target_expression:
+            photo_expressions = [f["emotion"]["dominant"].lower() for f in p.get("faces", []) if "emotion" in f]
+            if target_expression.lower() not in photo_expressions and p.get("dominant_expression", "").lower() != target_expression.lower():
+                continue
+
+        # Filter group / face count
+        if is_group is True and not p.get("is_group_photo"):
+            continue
+        if is_group is False and p.get("is_group_photo"):
+            continue
+        if min_faces is not None and p.get("face_count", 0) < min_faces:
+            continue
+        if max_faces is not None and p.get("face_count", 0) > max_faces:
+            continue
+
+        filtered.append(p)
+
+    return {
+        "eventId": event_id,
+        "total": len(filtered),
+        "matches": filtered
+    }
+
+
+# -------------------------
+# API: Natural Language Photo Search
+# -------------------------
+@app.post("/events/{event_id}/nl-search")
+async def natural_language_search(event_id: str, request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    query = body.get("query", "")
+    parsed = NLQueryParser.parse(query)
+
+    event_dir = os.path.join(BASE_DATA_DIR, "events", event_id)
+    meta_path = os.path.join(event_dir, "photos_meta.json")
+
+    if not os.path.exists(meta_path):
+        return {"query": query, "parsed_filters": parsed, "matches": [], "total": 0}
+
+    with open(meta_path, "r") as f:
+        photos_data = json.load(f)
+
+    scored_photos = []
+
+    for filename, p in photos_data.items():
+        score = 0.5  # base relevance
+
+        # Scene match
+        if parsed["scene"]:
+            scenes = [s["label"].lower() for s in p.get("scenes", [])]
+            if parsed["scene"].lower() in scenes or p.get("primary_scene", "").lower() == parsed["scene"].lower():
+                score += 0.35
+            else:
+                score -= 0.25
+
+        # Expression match
+        if parsed["expression"]:
+            expressions = [f["emotion"]["dominant"].lower() for f in p.get("faces", []) if "emotion" in f]
+            if parsed["expression"].lower() in expressions or p.get("dominant_expression", "").lower() == parsed["expression"].lower():
+                score += 0.35
+            else:
+                score -= 0.25
+
+        # Group match
+        if parsed["is_group"]:
+            if p.get("is_group_photo"):
+                score += 0.25
+            else:
+                score -= 0.20
+
+        if parsed["min_faces"] is not None:
+            if p.get("face_count", 0) >= parsed["min_faces"]:
+                score += 0.15
+            else:
+                score -= 0.15
+
+        if parsed["max_faces"] is not None:
+            if p.get("face_count", 0) <= parsed["max_faces"]:
+                score += 0.15
+            else:
+                score -= 0.15
+
+        if score > 0.40:
+            scored_photos.append({
+                "photo": p,
+                "relevance": round(float(score), 2)
+            })
+
+    scored_photos.sort(key=lambda x: x["relevance"], reverse=True)
+
+    return {
+        "query": query,
+        "parsed_filters": parsed,
+        "total": len(scored_photos),
+        "matches": [item["photo"] for item in scored_photos]
+    }
+
+
+# -------------------------
+# API: Match Registered Guest Profiles (Notifications)
+# -------------------------
+@app.post("/events/{event_id}/match-profiles")
+async def match_guest_profiles(event_id: str, request: Request):
+    try:
+        body = await request.json()
+        profiles = body.get("profiles", [])
+    except Exception:
+        profiles = []
+
+    if not profiles:
+        return {"matches": []}
+
+    event_dir = os.path.join(BASE_DATA_DIR, "events", event_id)
+    index_dir = os.path.join(event_dir, "index")
+
+    if not os.path.exists(index_dir):
+        return {"matches": []}
+
+    indexer = FaceIndexer(
+        settings.EMBEDDING_DIM,
+        index_path=os.path.join(index_dir, "faces.index"),
+        meta_path=os.path.join(index_dir, "meta.json")
+    )
+
+    results = []
+    for profile in profiles:
+        user_id = profile.get("userId")
+        emb = profile.get("embedding")
+        if not user_id or not emb:
+            continue
+
+        raw_matches = indexer.search(emb, top_k=20)
+        strong_images = set()
+
+        for m in raw_matches:
+            if m["score"] >= settings.STRONG_THRESHOLD:
+                strong_images.add(os.path.basename(m["image_path"]))
+
+        if strong_images:
+            results.append({
+                "userId": user_id,
+                "matchedPhotos": list(strong_images)
+            })
+
+    return {"matches": results}
 
 
 # -------------------------

@@ -127,6 +127,63 @@ export class EventController {
       next(err);
     }
   };
+
+  /**
+   * GET /events/:eventId/stats
+   * Retrieves AI classification statistics
+   */
+  getPhotosStats = async (req, res, next) => {
+    try {
+      const { eventId } = req.params;
+      const stats = await this.eventService.getPhotosMetadata(eventId);
+      return res.status(200).json(stats);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /**
+   * GET /events/:eventId/photos/:photoId/analysis
+   * Retrieves detailed face bounding boxes, emotion, and scene analysis for a photo
+   */
+  getPhotoAnalysis = async (req, res, next) => {
+    try {
+      const { eventId, photoId } = req.params;
+      const analysis = await this.eventService.getPhotoAnalysis(eventId, photoId);
+      return res.status(200).json(analysis);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /**
+   * POST /events/:eventId/filter
+   * Filters photos by scene, expression, min_faces, etc.
+   */
+  filterPhotos = async (req, res, next) => {
+    try {
+      const { eventId } = req.params;
+      const results = await this.eventService.filterPhotos(eventId, req.body || {});
+      return res.status(200).json(results);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /**
+   * POST /events/:eventId/nl-search
+   * Natural language query photo search
+   */
+  naturalLanguageSearch = async (req, res, next) => {
+    try {
+      const { eventId } = req.params;
+      const query = req.body?.query || '';
+      const results = await this.eventService.naturalLanguageSearch(eventId, query);
+      return res.status(200).json(results);
+    } catch (err) {
+      next(err);
+    }
+  };
 }
 
 export const eventController = new EventController();

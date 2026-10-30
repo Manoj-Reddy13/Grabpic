@@ -187,6 +187,83 @@ export class AiService {
       throw new Error(`Failed to download ZIP: ${err.message}`);
     }
   }
+
+  /**
+   * Fetches photos metadata & classification statistics from AI service
+   */
+  async getPhotosMetadata(eventId) {
+    const url = `${this.internalBaseUrl}/events/${eventId}/photos-metadata`;
+    try {
+      const response = await axios.get(url);
+      return response.data;
+    } catch (err) {
+      return { photos: {}, stats: {} };
+    }
+  }
+
+  /**
+   * Fetches analysis for a single photo
+   */
+  async getPhotoAnalysis(eventId, filename) {
+    const url = `${this.internalBaseUrl}/events/${eventId}/photos/${filename}/analysis`;
+    try {
+      const response = await axios.get(url);
+      return response.data;
+    } catch (err) {
+      throw new Error(`Photo analysis not available: ${err.message}`);
+    }
+  }
+
+  /**
+   * Filters event photos by scene, expression, face count
+   */
+  async filterPhotos(eventId, filters = {}) {
+    const url = `${this.internalBaseUrl}/events/${eventId}/filter`;
+    try {
+      const response = await axios.post(url, filters);
+      const data = response.data;
+      const matches = (data.matches || []).map(p => {
+        const item = this.buildImageMatch({ image_id: p.filename, score: 1.0 }, eventId);
+        return {
+          ...p,
+          ...item
+        };
+      });
+      return {
+        eventId,
+        total: matches.length,
+        matches
+      };
+    } catch (err) {
+      return { eventId, total: 0, matches: [] };
+    }
+  }
+
+  /**
+   * Natural language photo search
+   */
+  async naturalLanguageSearch(eventId, query) {
+    const url = `${this.internalBaseUrl}/events/${eventId}/nl-search`;
+    try {
+      const response = await axios.post(url, { query });
+      const data = response.data;
+      const matches = (data.matches || []).map(p => {
+        const item = this.buildImageMatch({ image_id: p.filename, score: 1.0 }, eventId);
+        return {
+          ...p,
+          ...item
+        };
+      });
+      return {
+        query,
+        parsedFilters: data.parsed_filters,
+        total: matches.length,
+        matches
+      };
+    } catch (err) {
+      return { query, parsedFilters: {}, total: 0, matches: [] };
+    }
+  }
 }
 
 export const aiService = new AiService();

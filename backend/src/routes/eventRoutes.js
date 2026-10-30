@@ -34,6 +34,12 @@ router.post(
 router.post('/:eventId/search', upload.array('files'), eventController.searchImages);
 router.get('/:eventId/download', eventController.downloadAll);
 
+// Advanced AI Features: Filtering, NL Search, and Stats
+router.get('/:eventId/stats', eventController.getPhotosStats);
+router.get('/:eventId/photos/:photoId/analysis', eventController.getPhotoAnalysis);
+router.post('/:eventId/filter', eventController.filterPhotos);
+router.post('/:eventId/nl-search', eventController.naturalLanguageSearch);
+
 // Social Features (Likes & Comments)
 router.use('/:eventId', socialRoutes);
 
