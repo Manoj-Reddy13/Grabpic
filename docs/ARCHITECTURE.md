@@ -2,159 +2,95 @@
 
 ## Overview
 
-GrabPic has three services:
-- **Frontend**: React + Vite
-- **Backend**: Spring Boot 3 / Java 21
-- **AI service**: FastAPI / Python 3.11
+GrabPic follows a three-tier microservices architecture:
+- **Frontend**: React 19 + Vite (Retro Cyberpunk Photo Lab design)
+- **Backend**: Node.js (Express 4) + SQLite persistence with relational constraints & WAL mode
+- **AI Service**: FastAPI / Python 3.12 (InsightFace, FAISS, EmotionDetector, SceneClassifier, NLQueryParser)
 
-Frontend ↔ backend and backend ↔ AI service communicate over HTTP. Images are served through signed URLs/tokens, not direct backend file serving.
+Images are stored in Azure Blob Storage (or local storage), and served via signed tokens or Azure Blob SAS URLs.
 
-## System map
-
-```text
-User → Frontend → Backend → AI service
-                    │          │
-                    │          ├─ FAISS indexes (local disk)
-                    │          └─ Face detection / embedding / matching
-                    └─ Azure Blob Storage (original images)
-```
-
-## Service responsibilities
-
-### Frontend
-- Event creation
-- Photo upload
-- Selfie search
-- Results display and pagination
-- Image modal/navigation
-
-Key parts: `Home.jsx`, `CreateEvent.jsx`, `EventPage.jsx`, `client.js`
-
-### Backend
-- Event lifecycle
-- Upload validation
-- AI service orchestration
-- Azure Blob integration
-- Pagination and response shaping
-- Signed URL generation
-
-Key parts: `EventController`, `EventService`, `AiService`, `TokenService`
-
-### AI service
-- Face detection
-- Embedding extraction
-- FAISS indexing/search
-- Multi-selfie aggregation
-- Secure image serving
-
-Key parts: `FaceDetector`, `FaceEmbedder`, `FaceIndexer`, `FaceMatcher`, `SearchService`
-
-## Data flow
-
-### Event creation
-1. Frontend sends `POST /events`.
-2. Backend creates the event ID.
-3. Organizer uploads photos.
-4. Backend forwards photos to the AI service.
-5. AI service processes in the background and stores the index.
-
-### Search
-1. Frontend sends selfie uploads to backend.
-2. Backend forwards to AI service.
-3. AI service loads the FAISS index, matches faces, and returns hits.
-4. Backend builds `ImageMatch` data, adds signed URLs, and paginates.
-5. Frontend groups results into strong/weak matches.
-
-### Image access
-- **Azure Blob path**: SAS URL, ~10 min expiry.
-- **AI service path**: `/images/{event_id}/images/{filename}`, token-verified, ~3 hour expiry.
-
-## Storage
-
-### AI service local disk
+## System Map
 
 ```text
-/app/data/
-└── events/{event_id}/
-    ├── meta.json
-    ├── status.json
-    ├── index/
-    │   ├── faces.index
-    │   └── meta.json
-    └── images/{uuid}.jpg
+User → Frontend (React 19 + Vite)
+         │
+         ▼
+       Backend (Node.js Express + SQLite)
+         │                    │
+         │                    ├─ SQLite Relational DB (Users, Events, Likes, Comments,
+         │                    │                       Collaborators, Notifications, Audit)
+         │                    │
+         ▼                    ▼
+    AI Service (FastAPI) ─── Azure Blob Storage (Original Event Photos)
+         │
+         ├─ Face Detection (InsightFace Buffalo_L)
+         ├─ Group Photo Detection & Bounding Boxes
+         ├─ Facial Expression Classifier (5 categories)
+         ├─ Scene Recognition (10 categories)
+         ├─ Natural Language Query Parser
+         └─ FAISS Vector Similarity Indexes
 ```
 
-- `meta.json`: event and expiry metadata
-- `status.json`: processing state
-- `faces.index`: FAISS index
-- index `meta.json`: image/embedding mapping
+## Service Responsibilities
 
-### Azure Blob Storage
-```text
-events/{event_id}/images/{uuid}.jpg
-```
+### Frontend (`grabpic-frontend`)
+- Event creation and sharing
+- Multi-selfie upload and face fusion search
+- Natural language photo search and preset query chips
+- Multi-facet filters (Scene, Expression, Group/Solo)
+- In-App Notifications Center (with unread badge & preferences)
+- Collaborative album management (invite by email, role assignments)
+- Real-time photo likes and interactive comments drawer
+- AI Insights dashboard (group photo counts, scene & expression distributions)
+- Biometric privacy consent controls
 
-- Upload: AI service during processing
-- Download: backend-generated SAS URLs
-- Delete: expiry cleanup
+### Backend (`backend`)
+- Event lifecycle and access control
+- Role-Based Access Control (RBAC): `owner`, `admin`, `photographer`, `viewer`
+- Social layer: Likes (with unique constraint per user/photo) and comments (with moderation)
+- Collaborative album management & activity audit logs
+- In-app notification center & deduplication engine
+- Biometric profile registration & consent records
+- Orchestration with AI Service and Azure Blob Storage
+- Secure signed token generation & URL signing
 
-## Face recognition pipeline
+### AI Service (`ai-service`)
+- Face detection (InsightFace) supporting group photos with bounding box extraction
+- Multi-face embedding extraction (512-dim ArcFace vectors)
+- Facial expression classification:
+  - *Happy / Smiling*, *Neutral*, *Surprised*, *Sad*, *Angry*
+- Scene recognition:
+  - *Stage*, *Audience*, *Group Photo*, *Outdoor*, *Indoor*, *Food*, *Ceremony*, *Sports*, *Decoration*, *Selfie*
+- Natural language query parser converting human text into structured filter conditions
+- FAISS cosine similarity vector search
+- Guest face profile matching for automated notifications
 
-1. **Detection**: InsightFace Buffalo_L / RetinaFace, resized to 640×640.
-2. **Embedding**: ArcFace, 512-dim, L2 normalized.
-3. **Indexing**: FAISS flat index with cosine similarity.
-4. **Matching**:
-   - Strong: `score >= 0.65`
-   - Weak: `0.5 <= score < 0.65`
-   - No match: `< 0.5`
+---
 
-Multi-selfie fusion searches each selfie independently, then deduplicates and ranks combined results.
+## Database Schema (SQLite Migrations)
 
-## Security
+- **`users`**: `id`, `email`, `name`, `avatar_url`, `created_at`
+- **`events`**: `id`, `title`, `description`, `owner_id`, `created_at`, `expires_at`
+- **`event_collaborators`**: `id`, `event_id`, `user_id`, `user_email`, `role`, `status`, `created_at`
+- **`photos`**: `id`, `event_id`, `uploaded_by`, `face_count`, `scenes_json`, `expressions_json`, `metadata_json`, `created_at`
+- **`photo_likes`**: `id`, `photo_id`, `event_id`, `user_id`, `created_at`, `UNIQUE(photo_id, user_id)`
+- **`photo_comments`**: `id`, `photo_id`, `event_id`, `user_id`, `user_name`, `comment_text`, `created_at`, `updated_at`
+- **`activity_logs`**: `id`, `event_id`, `user_id`, `user_name`, `action`, `details_json`, `created_at`
+- **`guest_profiles`**: `id`, `event_id`, `user_id`, `name`, `email`, `embedding_json`, `consent_given`, `created_at`
+- **`notifications`**: `id`, `user_id`, `event_id`, `title`, `message`, `data_json`, `is_read`, `created_at`
+- **`user_preferences`**: `user_id`, `preferences_json`, `updated_at`
 
-- Signed URLs use HMAC-based tokens.
-- Tokens include event ID, image filename, and expiry.
-- Token expiry: 24 hours.
-- Image access rate limit: 60 req/min/IP.
-- Events auto-delete after 24 hours.
+---
 
-Cleanup runs every 10 minutes and removes blob objects, local files, and FAISS indexes for expired events.
+## Security & Biometric Privacy
 
-## Scalability
-
-Current limits:
-- AI service is stateful
-- FAISS indexes live on local disk
-- Backend has no cache layer
-
-Path to scale:
-1. Externalize FAISS state.
-2. Move background work to a queue/worker model.
-3. Move event metadata to PostgreSQL.
-4. Add CDN-backed image delivery.
-
-## Monitoring
-
-| Metric | Alert |
-|---|---|
-| Image processing time | > 30s/image |
-| Search latency | > 2s |
-| 429 hits | > 10/min |
-| Disk usage | > 80% |
-| Cleanup errors | > 0 |
-
-Log key events: event creation, processing start/finish/fail, search requests, token failures, rate limit hits.
-
-## Why these choices
-
-- **FAISS**: fast similarity search, low memory use, cosine support.
-- **InsightFace**: pre-trained, accurate, ONNX-friendly.
-- **Azure Blob**: cheap storage, SAS support, CDN-ready.
-- **Spring Boot**: mature, type-safe, strong Azure support.
-
-## Future work
-
-- Kubernetes + Helm
-- Event-driven processing
-- Redis/CDN caching
-- Prometheus, Grafana, Jaeger, ELK
+1. **Explicit Biometric Consent**: Guests must provide consent before facial features/selfies are processed.
+2. **Data Erasure**: Guests can delete registered selfies and face embeddings at any time (`DELETE /events/:eventId/register-profile`).
+3. **Role-Based Access Control**:
+   - `owner` / `admin`: Full album management, collaborator invitation, comment moderation.
+   - `photographer`: Can upload event photos.
+   - `viewer`: Can search, view, like, and comment on photos.
+4. **Link Expiration & Access**:
+   - Azure Blob SAS URLs valid for 10 minutes.
+   - Fallback AI service signed tokens valid for 24 hours.
+   - Events and local image indexes auto-expire after 24 hours.
