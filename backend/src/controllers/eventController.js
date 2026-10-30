@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { eventService } from '../services/eventService.js';
+import { collaboratorService } from '../services/collaboratorService.js';
+import { notificationService } from '../services/notificationService.js';
+import { getUser } from '../middleware/auth.js';
+import db from '../db/database.js';
 
 export class EventController {
   constructor(service = eventService) {
@@ -13,7 +17,28 @@ export class EventController {
   createEvent = async (req, res, next) => {
     try {
       const eventId = randomUUID();
-      return res.status(200).json({ eventId });
+      const user = req.user || getUser(req);
+      const title = req.body?.title || 'Untitled Event';
+      collaboratorService.ensureEvent(eventId, user.id, title);
+      collaboratorService.logActivity(eventId, user.id, 'created_event', { title });
+      return res.status(200).json({ eventId, title });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /**
+   * GET /events/:eventId
+   * Gets event details
+   */
+  getEvent = async (req, res, next) => {
+    try {
+      const { eventId } = req.params;
+      const event = db.prepare('SELECT id, title, description, owner_id, created_at, expires_at FROM events WHERE id = ?').get(eventId);
+      if (!event) {
+        return res.status(404).json({ error: 'Event not found' });
+      }
+      return res.status(200).json(event);
     } catch (err) {
       next(err);
     }
@@ -27,7 +52,41 @@ export class EventController {
     try {
       const { eventId } = req.params;
       const files = req.files || [];
+      const user = req.user || getUser(req);
+
+      collaboratorService.ensureEvent(eventId, user.id);
       const result = await this.eventService.processImages(eventId, files);
+
+      // Log activity
+      collaboratorService.logActivity(eventId, user.id, 'uploaded_photos', { count: files.length });
+
+      // Save photos to photos table
+      for (const file of files) {
+        const photoId = file.originalname || randomUUID();
+        db.prepare(`
+          INSERT OR IGNORE INTO photos (id, event_id, uploaded_by)
+          VALUES (?, ?, ?)
+        `).run(photoId, eventId, user.id);
+      }
+
+      // Check registered guest profiles for match notifications
+      try {
+        const profiles = notificationService.getRegisteredProfilesForEvent(eventId);
+        if (profiles.length > 0) {
+          for (const profile of profiles) {
+            notificationService.createNotification(
+              profile.userId,
+              eventId,
+              'New Photos Uploaded',
+              `New photos were uploaded to event ${eventId}. Search to find any new matches!`,
+              { type: 'new_photos_uploaded', count: files.length }
+            );
+          }
+        }
+      } catch (notifErr) {
+        console.warn('Notification trigger warning:', notifErr.message);
+      }
+
       return res.status(200).send(result);
     } catch (err) {
       next(err);

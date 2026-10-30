@@ -2,11 +2,21 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import eventRoutes from './routes/eventRoutes.js';
+import notificationRoutes from './routes/notificationRoutes.js';
+import { runMigrations } from './db/migrations.js';
+import { authMiddleware } from './middleware/auth.js';
 
 export function createApp() {
+  // Ensure database migrations run on app initialization
+  try {
+    runMigrations();
+  } catch (err) {
+    console.error('Failed to run database migrations:', err);
+  }
+
   const app = express();
 
-  // Enable CORS matching Spring Boot WebConfig (all origins, all methods)
+  // Enable CORS
   app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -17,13 +27,19 @@ export function createApp() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-  // Health check endpoints (Spring Boot Actuator & standard health check)
+  // Global user identity & auth extraction
+  app.use(authMiddleware);
+
+  // Health check endpoints
   app.get(['/actuator/health', '/health'], (req, res) => {
     res.status(200).json({ status: 'UP' });
   });
 
   // Event routes
   app.use('/events', eventRoutes);
+
+  // Global Notification routes
+  app.use('/notifications', notificationRoutes);
 
   // 404 Not Found handler
   app.use((req, res) => {
