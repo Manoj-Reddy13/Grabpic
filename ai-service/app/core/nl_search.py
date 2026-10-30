@@ -19,6 +19,8 @@ EXPRESSION_MAP = {
     "laugh": "Happy / Smiling",
     "laughing": "Happy / Smiling",
     "joy": "Happy / Smiling",
+    "fun": "Happy / Smiling",
+    "excited": "Happy / Smiling",
     "neutral": "Neutral",
     "calm": "Neutral",
     "serious": "Neutral",
@@ -136,3 +138,4 @@ class NLQueryParser:
         result["keywords"] = tokens
 
         return result
+

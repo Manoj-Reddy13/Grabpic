@@ -12,3 +12,4 @@ router.delete('/:userId', requireEventRole(['owner', 'admin']), collaboratorCont
 router.get('/activity', collaboratorController.getActivityHistory);
 
 export default router;
+

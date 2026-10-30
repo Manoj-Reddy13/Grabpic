@@ -12,3 +12,4 @@ router.get('/preferences', notificationController.getPreferences);
 router.put('/preferences', notificationController.updatePreferences);
 
 export default router;
+

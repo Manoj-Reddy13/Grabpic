@@ -90,3 +90,4 @@ describe('Advanced AI Features & Intelligent Search Endpoints', () => {
     assert.equal(res.parsedFilters.expression, 'Happy / Smiling');
   });
 });
+

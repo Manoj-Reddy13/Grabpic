@@ -74,3 +74,4 @@ export class SocialController {
 }
 
 export const socialController = new SocialController();
+

@@ -20,6 +20,7 @@ class EmotionDetector:
     """
     Classifies facial expressions using facial landmark geometry and feature analysis.
     Supported categories: Happy / Smiling, Neutral, Sad, Angry, Surprised.
+    Uses InsightFace 68-landmark 3D mesh when available, with robust 5-landmark fallback.
     """
 
     def __init__(self, enabled: bool = True):
@@ -30,7 +31,7 @@ class EmotionDetector:
         Classifies visible expression for a detected face.
 
         Args:
-            face: InsightFace Face object with 'kps' (5 landmarks) and 'bbox'.
+            face: InsightFace Face object with 'landmark_3d_68', 'kps' (5 landmarks), and 'bbox'.
             image: Full image numpy array (optional).
 
         Returns:
@@ -42,73 +43,86 @@ class EmotionDetector:
                 "scores": {cat: (1.0 if cat == "Neutral" else 0.0) for cat in EMOTION_CATEGORIES},
             }
 
+        lm68 = getattr(face, "landmark_3d_68", None)
         kps = getattr(face, "kps", None)
         bbox = getattr(face, "bbox", None)
 
-        if kps is None or len(kps) < 5 or bbox is None:
-            return {
-                "dominant": "Neutral",
-                "scores": {
-                    "Happy / Smiling": 0.2,
-                    "Neutral": 0.6,
-                    "Sad": 0.05,
-                    "Angry": 0.05,
-                    "Surprised": 0.1,
-                },
-            }
+        smile_val = 0.0
+        surprised_val = 0.0
+        sad_val = 0.0
+        angry_val = 0.0
 
-        # Landmarks: 0: left_eye, 1: right_eye, 2: nose, 3: left_mouth, 4: right_mouth
-        left_eye, right_eye = kps[0], kps[1]
-        nose = kps[2]
-        left_mouth, right_mouth = kps[3], kps[4]
+        if lm68 is not None and len(lm68) >= 68:
+            # 68-landmark 3D mesh
+            # Eyes: left outer corner 36, right outer corner 45
+            iod = np.linalg.norm(lm68[45, :2] - lm68[36, :2])
+            if iod <= 0:
+                iod = 1.0
 
-        # Inter-ocular distance (reference scale)
-        iod = np.linalg.norm(right_eye - left_eye)
-        if iod <= 0:
-            iod = 1.0
+            # Mouth corners: left 48, right 54
+            mouth_w = np.linalg.norm(lm68[54, :2] - lm68[48, :2])
+            mouth_ratio = mouth_w / iod
 
-        # Mouth width
-        mouth_width = np.linalg.norm(right_mouth - left_mouth)
-        mouth_ratio = mouth_width / iod  # Typically ~0.8-1.3 for smile
+            # Mouth height: upper lip center 51, lower lip center 57
+            mouth_h = np.linalg.norm(lm68[57, :2] - lm68[51, :2])
+            mouth_open = mouth_h / iod
 
-        # Mouth center & vertical position relative to nose
-        mouth_center = (left_mouth + right_mouth) / 2.0
-        nose_to_mouth_y = mouth_center[1] - nose[1]
-        mouth_elevation = (left_mouth[1] + right_mouth[1]) / 2.0 - mouth_center[1]
+            # Corner lift: corners vs upper lip center
+            corners_y = (lm68[48, 1] + lm68[54, 1]) / 2.0
+            lip_c_y = lm68[51, 1]
+            lift = (lip_c_y - corners_y) / iod  # positive = lifted corners (smile)
 
-        # Smile detection: smiling widens mouth significantly and lifts mouth corners
-        # Eye level tilt
-        eye_dy = right_eye[1] - left_eye[1]
-        eye_dx = right_eye[0] - left_eye[0]
-        angle = np.arctan2(eye_dy, eye_dx)
+            # Eyebrow height: left eyebrow 19, right eyebrow 24 vs eyes 37, 44
+            brow_dist = ((lm68[37, 1] - lm68[19, 1]) + (lm68[44, 1] - lm68[24, 1])) / (2.0 * iod)
 
-        # Rotate mouth corners to align with eye line
-        c, s = np.cos(-angle), np.sin(-angle)
-        rot_mat = np.array([[c, -s], [s, c]])
+            # Features:
+            # 1. Smile: mouth widens (>0.67 iod) and corners lift (lift > -0.09)
+            if mouth_ratio > 0.65 or lift > -0.09:
+                smile_val = max(0.0, (mouth_ratio - 0.64) * 3.5) + max(0.0, (lift + 0.10) * 3.0)
 
-        rel_mouth_l = rot_mat @ (left_mouth - nose)
-        rel_mouth_r = rot_mat @ (right_mouth - nose)
+            # 2. Surprised: mouth open (>0.24) and high eyebrows
+            if mouth_open > 0.22 or brow_dist > 0.32:
+                surprised_val = max(0.0, (mouth_open - 0.20) * 4.0) + max(0.0, (brow_dist - 0.28) * 2.5)
 
-        # In horizontal face coordinates:
-        # If corners are higher than expected relative to center, curvature is positive (smile)
-        corner_avg_y = (rel_mouth_l[1] + rel_mouth_r[1]) / 2.0
-        # Check aspect ratio
-        face_w = max(1.0, bbox[2] - bbox[0])
-        face_h = max(1.0, bbox[3] - bbox[1])
-        aspect = face_h / face_w
+            # 3. Sad: downturned mouth corners (lift < -0.13) and narrower mouth
+            if lift < -0.12 and mouth_ratio < 0.63:
+                sad_val = max(0.0, (-0.12 - lift) * 4.0)
 
-        # Feature indicators
-        smile_indicator = max(0.0, (mouth_ratio - 0.85) * 2.5)
-        surprised_indicator = max(0.0, (aspect - 1.25) * 3.0)
-        sad_indicator = max(0.0, (0.80 - mouth_ratio) * 2.0)
-        angry_indicator = max(0.0, 0.4 - min(0.4, (nose_to_mouth_y / iod) * 0.5))
+            # 4. Angry: lowered eyebrows / furrowed brows
+            if brow_dist < 0.22:
+                angry_val = max(0.0, (0.24 - brow_dist) * 3.5)
 
-        # Raw scores
-        raw_happy = 0.15 + (smile_indicator * 0.8)
-        raw_surprised = 0.05 + (surprised_indicator * 0.6)
-        raw_sad = 0.05 + (sad_indicator * 0.5)
-        raw_angry = 0.05 + (angry_indicator * 0.4)
-        raw_neutral = max(0.1, 1.0 - (raw_happy * 0.8 + raw_surprised * 0.5 + raw_sad * 0.5))
+        elif kps is not None and len(kps) >= 5:
+            # 5-point fallback
+            left_eye, right_eye = kps[0], kps[1]
+            nose = kps[2]
+            left_mouth, right_mouth = kps[3], kps[4]
+
+            iod = np.linalg.norm(right_eye - left_eye)
+            if iod <= 0:
+                iod = 1.0
+
+            mouth_w = np.linalg.norm(right_mouth - left_mouth)
+            mouth_ratio = mouth_w / iod
+
+            if mouth_ratio > 0.68:
+                smile_val = max(0.0, (mouth_ratio - 0.66) * 3.0)
+
+            face_w = max(1.0, bbox[2] - bbox[0]) if bbox is not None else 1.0
+            face_h = max(1.0, bbox[3] - bbox[1]) if bbox is not None else 1.0
+            aspect = face_h / face_w
+            if aspect > 1.30:
+                surprised_val = max(0.0, (aspect - 1.25) * 2.0)
+
+        # Baseline weights
+        raw_happy = 0.20 + (smile_val * 1.5)
+        raw_surprised = 0.15 + (surprised_val * 1.4)
+        raw_sad = 0.15 + (sad_val * 1.4)
+        raw_angry = 0.15 + (angry_val * 1.4)
+        
+        # Neutral is high only when other expressions are low
+        non_neutral_max = max(smile_val, surprised_val, sad_val, angry_val)
+        raw_neutral = max(0.15, 0.55 - (non_neutral_max * 0.8))
 
         # Softmax normalization
         exp_scores = np.exp([raw_happy, raw_neutral, raw_sad, raw_angry, raw_surprised])

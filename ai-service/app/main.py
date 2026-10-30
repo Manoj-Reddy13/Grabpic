@@ -30,6 +30,9 @@ from app.core.blob_service import (
 )
 from app.core.blob_storage import save_image_bytes
 from app.core.nl_search import NLQueryParser
+from app.core.emotion import EmotionDetector
+from app.core.scene import SceneClassifier
+import cv2
 
 
 # -------------------------
@@ -284,19 +287,93 @@ async def search_images(event_id: str, files: List[UploadFile] = File(...)):
 
 
 # -------------------------
+# Helpers: On-Demand Photo Analysis & Metadata
+# -------------------------
+def get_or_create_photos_meta(event_id: str) -> dict:
+    event_dir = os.path.join(BASE_DATA_DIR, "events", event_id)
+    meta_path = os.path.join(event_dir, "photos_meta.json")
+    images_dir = os.path.join(event_dir, "images")
+
+    photos_data = {}
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r") as f:
+                photos_data = json.load(f)
+        except Exception as e:
+            print(f"[WARN] Error loading {meta_path}: {e}")
+            photos_data = {}
+
+    # If photos_data is missing or incomplete compared to images_dir, analyze missing images
+    if os.path.exists(images_dir):
+        image_files = [fn for fn in os.listdir(images_dir) if fn.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
+        missing_files = [fn for fn in image_files if fn not in photos_data]
+
+        if missing_files:
+            print(f"[ANALYSIS] Analyzing {len(missing_files)} unindexed images for event {event_id}...")
+            emotion_det = EmotionDetector()
+            scene_clf = SceneClassifier()
+
+            for fn in missing_files:
+                img_path = os.path.join(images_dir, fn)
+                try:
+                    img_bgr = cv2.imread(img_path)
+                    if img_bgr is None:
+                        continue
+                    faces = detector.detect(img_bgr)
+                    face_count = len(faces) if faces else 0
+                    scenes = scene_clf.classify(img_bgr, faces)
+
+                    photo_entry = {
+                        "filename": fn,
+                        "face_count": face_count,
+                        "is_group_photo": bool(face_count >= 2),
+                        "scenes": scenes,
+                        "primary_scene": scenes[0]["label"] if scenes else "Indoor",
+                        "faces": [],
+                        "dominant_expression": "Neutral",
+                    }
+
+                    if faces:
+                        expressions_tally = {}
+                        for idx, face in enumerate(faces):
+                            bbox = getattr(face, "bbox", None)
+                            det_score = getattr(face, "det_score", 1.0)
+                            bbox_list = [round(float(coord), 1) for coord in bbox] if bbox is not None else []
+                            emotion_res = emotion_det.classify_face(face, img_bgr)
+                            dom_expr = emotion_res["dominant"]
+                            expressions_tally[dom_expr] = expressions_tally.get(dom_expr, 0) + 1
+                            photo_entry["faces"].append({
+                                "face_id": idx,
+                                "bbox": bbox_list,
+                                "detection_score": round(float(det_score), 3) if det_score is not None else 1.0,
+                                "emotion": emotion_res,
+                            })
+                        if expressions_tally:
+                            photo_entry["dominant_expression"] = max(expressions_tally.items(), key=lambda x: x[1])[0]
+
+                    photos_data[fn] = photo_entry
+                except Exception as img_err:
+                    print(f"[ERROR] Failed analyzing {fn}: {img_err}")
+
+            # Persist updated photos_meta.json
+            try:
+                os.makedirs(event_dir, exist_ok=True)
+                with open(meta_path, "w") as f:
+                    json.dump(photos_data, f, indent=2)
+                print(f"[ANALYSIS] Successfully saved {len(photos_data)} photo metadata records for {event_id}")
+            except Exception as save_err:
+                print(f"[ERROR] Failed writing {meta_path}: {save_err}")
+
+    return photos_data
+
+
+# -------------------------
 # API: Photos Metadata & Stats
 # -------------------------
 @app.get("/events/{event_id}/photos-metadata")
 async def get_photos_metadata(event_id: str):
-    event_dir = os.path.join(BASE_DATA_DIR, "events", event_id)
-    meta_path = os.path.join(event_dir, "photos_meta.json")
-
-    if not os.path.exists(meta_path):
-        return {"photos": {}, "stats": {}}
-
     try:
-        with open(meta_path, "r") as f:
-            photos_data = json.load(f)
+        photos_data = get_or_create_photos_meta(event_id)
 
         total_photos = len(photos_data)
         group_photos = sum(1 for p in photos_data.values() if p.get("is_group_photo"))
@@ -336,20 +413,11 @@ async def get_photos_metadata(event_id: str):
 # -------------------------
 @app.get("/events/{event_id}/photos/{filename}/analysis")
 async def get_single_photo_analysis(event_id: str, filename: str):
-    event_dir = os.path.join(BASE_DATA_DIR, "events", event_id)
-    meta_path = os.path.join(event_dir, "photos_meta.json")
-
-    if not os.path.exists(meta_path):
-        raise HTTPException(status_code=404, detail="Event metadata not found")
-
     try:
-        with open(meta_path, "r") as f:
-            photos_data = json.load(f)
-
+        photos_data = get_or_create_photos_meta(event_id)
         photo = photos_data.get(filename)
         if not photo:
             raise HTTPException(status_code=404, detail="Photo analysis not found")
-
         return photo
     except HTTPException:
         raise
@@ -367,14 +435,7 @@ async def filter_event_photos(event_id: str, request: Request):
     except Exception:
         body = {}
 
-    event_dir = os.path.join(BASE_DATA_DIR, "events", event_id)
-    meta_path = os.path.join(event_dir, "photos_meta.json")
-
-    if not os.path.exists(meta_path):
-        return {"matches": [], "total": 0}
-
-    with open(meta_path, "r") as f:
-        photos_data = json.load(f)
+    photos_data = get_or_create_photos_meta(event_id)
 
     target_scene = body.get("scene")
     target_expression = body.get("expression")
@@ -382,18 +443,28 @@ async def filter_event_photos(event_id: str, request: Request):
     min_faces = body.get("min_faces")
     max_faces = body.get("max_faces")
 
+    scene_filter = target_scene.strip().lower() if target_scene and target_scene.strip().lower() not in ("all", "any", "") else None
+    expr_filter = target_expression.strip().lower() if target_expression and target_expression.strip().lower() not in ("all", "any", "") else None
+
     filtered = []
     for filename, p in photos_data.items():
         # Filter scene
-        if target_scene:
-            photo_scenes = [s["label"].lower() for s in p.get("scenes", [])]
-            if target_scene.lower() not in photo_scenes and p.get("primary_scene", "").lower() != target_scene.lower():
+        if scene_filter:
+            photo_scenes = [s.get("label", "").lower() for s in p.get("scenes", [])]
+            primary = p.get("primary_scene", "").lower()
+            if scene_filter not in photo_scenes and primary != scene_filter:
                 continue
 
         # Filter expression
-        if target_expression:
-            photo_expressions = [f["emotion"]["dominant"].lower() for f in p.get("faces", []) if "emotion" in f]
-            if target_expression.lower() not in photo_expressions and p.get("dominant_expression", "").lower() != target_expression.lower():
+        if expr_filter:
+            photo_expressions = [f.get("emotion", {}).get("dominant", "").lower() for f in p.get("faces", []) if "emotion" in f]
+            dom_expr = p.get("dominant_expression", "").lower()
+            matches_expr = (
+                expr_filter in dom_expr
+                or any(expr_filter in e for e in photo_expressions)
+                or (expr_filter in ("happy", "smiling", "smile") and any("happy" in e or "smile" in e for e in photo_expressions + [dom_expr]))
+            )
+            if not matches_expr:
                 continue
 
         # Filter group / face count
@@ -427,43 +498,45 @@ async def natural_language_search(event_id: str, request: Request):
 
     query = body.get("query", "")
     parsed = NLQueryParser.parse(query)
+    photos_data = get_or_create_photos_meta(event_id)
 
-    event_dir = os.path.join(BASE_DATA_DIR, "events", event_id)
-    meta_path = os.path.join(event_dir, "photos_meta.json")
-
-    if not os.path.exists(meta_path):
+    if not photos_data:
         return {"query": query, "parsed_filters": parsed, "matches": [], "total": 0}
-
-    with open(meta_path, "r") as f:
-        photos_data = json.load(f)
 
     scored_photos = []
 
     for filename, p in photos_data.items():
         score = 0.5  # base relevance
+        matched_criteria = 0
 
         # Scene match
         if parsed["scene"]:
-            scenes = [s["label"].lower() for s in p.get("scenes", [])]
-            if parsed["scene"].lower() in scenes or p.get("primary_scene", "").lower() == parsed["scene"].lower():
-                score += 0.35
+            scenes = [s.get("label", "").lower() for s in p.get("scenes", [])]
+            target_s = parsed["scene"].lower()
+            if target_s in scenes or p.get("primary_scene", "").lower() == target_s:
+                score += 0.40
+                matched_criteria += 1
             else:
-                score -= 0.25
+                score -= 0.20
 
         # Expression match
         if parsed["expression"]:
-            expressions = [f["emotion"]["dominant"].lower() for f in p.get("faces", []) if "emotion" in f]
-            if parsed["expression"].lower() in expressions or p.get("dominant_expression", "").lower() == parsed["expression"].lower():
-                score += 0.35
+            expressions = [f.get("emotion", {}).get("dominant", "").lower() for f in p.get("faces", []) if "emotion" in f]
+            dom_expr = p.get("dominant_expression", "").lower()
+            target_e = parsed["expression"].lower()
+            if target_e in expressions or dom_expr == target_e or any(target_e in e for e in expressions):
+                score += 0.40
+                matched_criteria += 1
             else:
-                score -= 0.25
+                score -= 0.20
 
         # Group match
         if parsed["is_group"]:
-            if p.get("is_group_photo"):
-                score += 0.25
+            if p.get("is_group_photo") or p.get("face_count", 0) >= 2:
+                score += 0.35
+                matched_criteria += 1
             else:
-                score -= 0.20
+                score -= 0.25
 
         if parsed["min_faces"] is not None:
             if p.get("face_count", 0) >= parsed["min_faces"]:
@@ -477,7 +550,19 @@ async def natural_language_search(event_id: str, request: Request):
             else:
                 score -= 0.15
 
-        if score > 0.40:
+        # Check raw query keywords
+        for kw in parsed.get("keywords", []):
+            if kw in ("photo", "photos", "picture", "pictures", "image", "images", "show", "find"):
+                continue
+            scenes = [s.get("label", "").lower() for s in p.get("scenes", [])]
+            if any(kw in s for s in scenes) or kw in p.get("primary_scene", "").lower():
+                score += 0.25
+                matched_criteria += 1
+            if kw in p.get("dominant_expression", "").lower():
+                score += 0.25
+                matched_criteria += 1
+
+        if score >= 0.40 or matched_criteria > 0:
             scored_photos.append({
                 "photo": p,
                 "relevance": round(float(score), 2)
@@ -485,11 +570,17 @@ async def natural_language_search(event_id: str, request: Request):
 
     scored_photos.sort(key=lambda x: x["relevance"], reverse=True)
 
+    # Fallback: if no photo matched specific keywords, or query was general ("all photos", "event"), return all photos
+    if not scored_photos:
+        matches = list(photos_data.values())
+    else:
+        matches = [item["photo"] for item in scored_photos]
+
     return {
         "query": query,
         "parsed_filters": parsed,
-        "total": len(scored_photos),
-        "matches": [item["photo"] for item in scored_photos]
+        "total": len(matches),
+        "matches": matches
     }
 
 

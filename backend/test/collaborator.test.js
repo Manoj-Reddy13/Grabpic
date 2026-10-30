@@ -65,3 +65,4 @@ describe('Collaborative Albums & Roles', () => {
     assert.ok(history.some(h => h.action.includes('collaborator') || h.action.includes('invitation')));
   });
 });
+

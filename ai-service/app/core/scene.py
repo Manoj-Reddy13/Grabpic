@@ -174,3 +174,4 @@ class SceneClassifier:
             filtered = sorted_scenes[:2]
 
         return filtered
+

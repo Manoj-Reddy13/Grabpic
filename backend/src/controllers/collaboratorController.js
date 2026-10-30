@@ -72,3 +72,4 @@ export class CollaboratorController {
 }
 
 export const collaboratorController = new CollaboratorController();
+

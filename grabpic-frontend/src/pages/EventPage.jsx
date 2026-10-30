@@ -134,11 +134,29 @@ export default function EventPage() {
     }
   }, [eventId]);
 
+  // ---- FETCH FILTER GALLERY (Auto-loads all event photos with AI metadata) ----
+  const fetchFilterGallery = useCallback(
+    async (filters = {}) => {
+      try {
+        setNlSearching(true);
+        const res = await filterEventPhotos(eventId, filters);
+        const matches = res.data?.matches || [];
+        setFilterResults(matches);
+        setAllImagesFlat(matches);
+        refreshLikes(matches);
+      } catch (err) {
+        console.warn("Failed fetching filter gallery:", err);
+      } finally {
+        setNlSearching(false);
+      }
+    },
+    [eventId, refreshLikes]
+  );
+
   useEffect(() => {
-    if (allImagesFlat.length > 0) {
-      refreshLikes(allImagesFlat);
-    }
-  }, [allImagesFlat, refreshLikes]);
+    fetchAuxData();
+    fetchFilterGallery({});
+  }, [fetchAuxData, fetchFilterGallery]);
 
   // ---- FILE HANDLER ----
   const handleFiles = (fileList) => {
@@ -241,15 +259,20 @@ export default function EventPage() {
   // ---- NATURAL LANGUAGE SEARCH ----
   const handleNlSearch = async (queryText) => {
     const q = queryText !== undefined ? queryText : nlQuery;
-    if (!q.trim()) return;
+    if (!q || !q.trim()) {
+      fetchFilterGallery({});
+      return;
+    }
 
     try {
       setNlSearching(true);
       const res = await naturalLanguageSearch(eventId, q.trim());
-      setFilterResults(res.data.matches || []);
-      setAllImagesFlat(res.data.matches || []);
+      const matches = res.data?.matches || [];
+      setFilterResults(matches);
+      setAllImagesFlat(matches);
+      refreshLikes(matches);
     } catch {
-      alert("Search failed");
+      alert("Search failed or service unavailable");
     } finally {
       setNlSearching(false);
     }
@@ -262,21 +285,12 @@ export default function EventPage() {
     setFilterType(type);
 
     const filters = {};
-    if (scene !== "All") filters.scene = scene;
-    if (expr !== "All") filters.expression = expr;
+    if (scene && scene !== "All") filters.scene = scene;
+    if (expr && expr !== "All") filters.expression = expr;
     if (type === "Group") filters.is_group = true;
     if (type === "Solo") filters.max_faces = 1;
 
-    try {
-      setNlSearching(true);
-      const res = await filterEventPhotos(eventId, filters);
-      setFilterResults(res.data.matches || []);
-      setAllImagesFlat(res.data.matches || []);
-    } catch {
-      // ignore
-    } finally {
-      setNlSearching(false);
-    }
+    fetchFilterGallery(filters);
   };
 
   // ---- COLLABORATOR ACTIONS ----
@@ -475,6 +489,23 @@ export default function EventPage() {
               >
                 {loading ? "Searching Faces..." : "🔍 Search My Photos"}
               </RetroButton>
+
+              <button
+                type="button"
+                className="chip-btn mt-16"
+                style={{
+                  borderColor: "var(--accent-cyan)",
+                  color: "var(--accent-cyan)",
+                  padding: "6px 14px",
+                  fontSize: "13px",
+                }}
+                onClick={() => {
+                  setActiveTab("nl-search");
+                  if (filterResults.length === 0) fetchFilterGallery({});
+                }}
+              >
+                ✨ Browse all photos & AI smart filters without selfie →
+              </button>
             </div>
 
             {/* Download All */}
@@ -683,7 +714,7 @@ export default function EventPage() {
                       onClick={() => setSelectedIndex(idx)}
                     >
                       <img
-                        src={img.url}
+                        src={img.url || (img.filename ? `http://localhost:8000/images/${eventId}/images/${img.filename}` : "")}
                         alt={`Photo ${idx + 1}`}
                         className="image-grid__img"
                         loading="lazy"
@@ -696,7 +727,7 @@ export default function EventPage() {
                         <span>{statsItem.likeCount || 0}</span>
                       </div>
                       <div className="card-tag-pill">
-                        {img.primary_scene || img.dominant_expression || "Photo"}
+                        {img.is_group_photo ? "👥 Group" : "👤 Solo"} • {img.primary_scene || "Photo"} • {img.dominant_expression || "Neutral"}
                       </div>
                     </div>
                   );
@@ -888,8 +919,8 @@ export default function EventPage() {
           selectedIndex={selectedIndex}
           onClose={() => setSelectedIndex(null)}
           onNavigate={setSelectedIndex}
-          getImageSrc={(img) => img.url}
-          getDownloadHref={(img) => img.url}
+          getImageSrc={(img) => img?.url || (img?.filename ? `http://localhost:8000/images/${eventId}/images/${img.filename}` : "")}
+          getDownloadHref={(img) => img?.url || (img?.filename ? `http://localhost:8000/images/${eventId}/images/${img.filename}` : "")}
         />
       </PageWrapper>
     </>
